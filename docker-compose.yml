@@ -2,8 +2,11 @@ version: '3.8'
 
 services:
   open-webui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: mws-open-webui
+    build:
+      context: open-webui-main
+      dockerfile: Dockerfile
+    image: gpthub:latest
+    container_name: gpthub
     ports:
       - "3000:8080"
     environment:
@@ -11,10 +14,6 @@ services:
       - OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
       - OPENAI_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
       - VERIFY_SSL=False
-
-      # ── Pipelines ─────────────────────────────────────────────────────
-      - PIPELINES_URL=http://pipelines:9099
-      - PIPELINES_API_KEY=sk-pipelines-local
 
       # ── Default model ─────────────────────────────────────────────────
       - DEFAULT_MODELS=llama-3.3-70b-instruct
@@ -25,7 +24,7 @@ services:
       - AUDIO_STT_OPENAI_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
       - AUDIO_STT_MODEL=whisper-turbo-local
 
-      # ── Image Generation — отключено, используется image_gen_pipeline ──
+      # ── Image Generation — handled by GPTHub router ───────────────────
       - IMAGE_GENERATION_ENGINE=
 
       # ── RAG / Embeddings ──────────────────────────────────────────────
@@ -34,29 +33,34 @@ services:
       - RAG_OPENAI_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
       - RAG_EMBEDDING_MODEL=bge-m3
 
+      # ── GPTHub router config ──────────────────────────────────────────
+      - GPTHUB_BASE_URL=https://api.gpt.mws.ru/v1
+      - GPTHUB_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
+      - GPTHUB_OPENWEBUI_BASE_URL=http://localhost:8080
+      - GPTHUB_MODEL_DEFAULT=llama-3.3-70b-instruct
+      - GPTHUB_MODEL_CODE=qwen3-coder-480b-a35b
+      - GPTHUB_MODEL_VISION=qwen2.5-vl-72b
+      - GPTHUB_MODEL_VISION_ALT=cotype-pro-vl-32b
+      - GPTHUB_MODEL_AUDIO=whisper-turbo-local
+      - GPTHUB_MODEL_MEMORY=mts-anya
+      - GPTHUB_MODEL_EMBED=bge-m3
+
     volumes:
       - open-webui-data:/app/backend/data
       - ./generated_pptx:/app/backend/data/pptx
-    depends_on:
-      - pipelines
+      - ./data/downloads:/app/backend/data/downloads
     restart: always
 
-  pipelines:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: mws-pipelines:latest
-    container_name: mws-pipelines
+  sqlite-web:
+    image: coleifer/sqlite-web
+    container_name: gpthub-db
     ports:
-      - "9099:9099"
+      - "8082:8080"
     environment:
-      - PIPELINES_API_KEY=sk-pipelines-local
+      - SQLITE_DATABASE=/data/smart_router_memory.db
     volumes:
-      - pipelines-data:/app/data
-      - ./generated_pptx:/app/data/pptx
-      - ./generated_files:/app/backend/data/downloads
+      - open-webui-data:/data
     restart: always
 
 volumes:
   open-webui-data:
-  pipelines-data:

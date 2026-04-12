@@ -49,52 +49,105 @@ except ImportError:
 log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Storage — SQLite with per-fact rows for semantic retrieval
+# Storage — SQLite (WAL mode, indexed, per-chat isolation)
+#
+# Schema:
+#   memory_facts  — current facts per (user_id, chat_id, key)
+#   memory_history — full audit log of every fact change
 # ---------------------------------------------------------------------------
 
 DB_PATH = Path("/app/backend/data/smart_router_memory.db")
+_db_lock = asyncio.Lock()
+
+
+def _db_connect() -> sqlite3.Connection:
+    """Open a connection with WAL mode and foreign keys enabled."""
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    con = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    con.execute("PRAGMA journal_mode=WAL")
+    con.execute("PRAGMA foreign_keys=ON")
+    con.execute("PRAGMA synchronous=NORMAL")
+    con.row_factory = sqlite3.Row
+    return con
 
 
 def _db_init() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    con = sqlite3.connect(str(DB_PATH))
-    con.execute(
-        """CREATE TABLE IF NOT EXISTS memory_facts (
-            id       INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id  TEXT NOT NULL,
-            key      TEXT NOT NULL,
-            value    TEXT NOT NULL,
-            embedding TEXT,
-            UNIQUE(user_id, key)
-        )"""
+    con = _db_connect()
+    con.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS memory_facts (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    TEXT    NOT NULL,
+            chat_id    TEXT    NOT NULL DEFAULT '',
+            key        TEXT    NOT NULL,
+            value      TEXT    NOT NULL,
+            embedding  TEXT,
+            updated_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+            UNIQUE(user_id, chat_id, key)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_facts_user_chat
+            ON memory_facts(user_id, chat_id);
+
+        CREATE TABLE IF NOT EXISTS memory_history (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    TEXT    NOT NULL,
+            chat_id    TEXT    NOT NULL DEFAULT '',
+            key        TEXT    NOT NULL,
+            value      TEXT    NOT NULL,
+            created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_history_user_chat
+            ON memory_history(user_id, chat_id);
+        """
     )
     con.commit()
     return con
 
 
+def _parse_uid(user_id: str) -> tuple[str, str]:
+    """Split composite 'uid:chat_id' key back into (uid, chat_id)."""
+    if ":" in user_id:
+        uid, chat_id = user_id.split(":", 1)
+        return uid, chat_id
+    return user_id, ""
+
+
 def _load_all_facts(user_id: str) -> dict:
+    uid, chat_id = _parse_uid(user_id)
     try:
         con = _db_init()
         rows = con.execute(
-            "SELECT key, value FROM memory_facts WHERE user_id=?", (user_id,)
+            "SELECT key, value FROM memory_facts WHERE user_id=? AND chat_id=?",
+            (uid, chat_id),
         ).fetchall()
         con.close()
-        return {k: v for k, v in rows}
+        return {r["key"]: r["value"] for r in rows}
     except Exception as e:
         log.error("Memory load error: %s", e)
         return {}
 
 
 def _save_fact(user_id: str, key: str, value: str, embedding: Optional[list] = None) -> None:
+    uid, chat_id = _parse_uid(user_id)
     try:
         con = _db_init()
         emb_str = json.dumps(embedding) if embedding else None
+        now = int(__import__("time").time())
         con.execute(
-            """INSERT INTO memory_facts(user_id, key, value, embedding)
-               VALUES(?,?,?,?)
-               ON CONFLICT(user_id, key) DO UPDATE
-               SET value=excluded.value, embedding=excluded.embedding""",
-            (user_id, key, value, emb_str),
+            """INSERT INTO memory_facts(user_id, chat_id, key, value, embedding, updated_at)
+               VALUES(?,?,?,?,?,?)
+               ON CONFLICT(user_id, chat_id, key) DO UPDATE
+               SET value=excluded.value,
+                   embedding=excluded.embedding,
+                   updated_at=excluded.updated_at""",
+            (uid, chat_id, key, value, emb_str, now),
+        )
+        # Audit trail
+        con.execute(
+            "INSERT INTO memory_history(user_id, chat_id, key, value, created_at) VALUES(?,?,?,?,?)",
+            (uid, chat_id, key, value, now),
         )
         con.commit()
         con.close()
@@ -103,9 +156,12 @@ def _save_fact(user_id: str, key: str, value: str, embedding: Optional[list] = N
 
 
 def _clear_memory(user_id: str) -> None:
+    uid, chat_id = _parse_uid(user_id)
     try:
         con = _db_init()
-        con.execute("DELETE FROM memory_facts WHERE user_id=?", (user_id,))
+        con.execute(
+            "DELETE FROM memory_facts WHERE user_id=? AND chat_id=?", (uid, chat_id)
+        )
         con.commit()
         con.close()
     except Exception as e:
@@ -113,17 +169,20 @@ def _clear_memory(user_id: str) -> None:
 
 
 def _load_facts_with_embeddings(user_id: str) -> list[dict]:
-    """Returns list of {key, value, embedding} for semantic search."""
+    uid, chat_id = _parse_uid(user_id)
     try:
         con = _db_init()
         rows = con.execute(
-            "SELECT key, value, embedding FROM memory_facts WHERE user_id=?", (user_id,)
+            """SELECT key, value, embedding FROM memory_facts
+               WHERE user_id=? AND chat_id=?
+               ORDER BY updated_at DESC""",
+            (uid, chat_id),
         ).fetchall()
         con.close()
         result = []
-        for key, value, emb_str in rows:
-            emb = json.loads(emb_str) if emb_str else None
-            result.append({"key": key, "value": value, "embedding": emb})
+        for r in rows:
+            emb = json.loads(r["embedding"]) if r["embedding"] else None
+            result.append({"key": r["key"], "value": r["value"], "embedding": emb})
         return result
     except Exception as e:
         log.error("Embedding load error: %s", e)
@@ -305,9 +364,8 @@ async def _summarize_and_save(
 
     prompt = (
         "Ты — система памяти. Проанализируй сообщения пользователя и извлеки личные факты.\n"
-        "Верни ТОЛЬКО валидный JSON без пояснений. Пример:\n"
-        '{"name":"Люда","age":"19","role":"повар","likes":"блины","location":"Москва",'
-        '"project":"Трамплин","tech":"Python","notes":"кошка рыжая, любит сливки"}\n'
+        "Верни ТОЛЬКО валидный JSON без пояснений.\n"
+        "Допустимые поля: name, age, role, likes, location, project, tech, notes.\n"
         "Поле notes — для всего что не вошло в стандартные поля.\n"
         f"Уже известно: {existing_str}\n"
         "Обнови или дополни. Не удаляй старые данные без явного противоречия.\n\n"
@@ -1195,6 +1253,10 @@ class Filter:
             text = self._extract_text(messages)
             user_info = __user__ or user or {}
             user_id = user_info.get("id", "anonymous")
+            # Isolate memory per chat session to prevent cross-chat contamination
+            chat_id = body.get("chat_id") or body.get("session_id") or ""
+            if chat_id:
+                user_id = f"{user_id}:{chat_id}"
             # OpenWebUI passes the user's API token for RAG calls
             api_token = user_info.get("token") or self.valves.api_key
             uv = self._parse_user_valves(user_info)
@@ -1427,6 +1489,10 @@ class Filter:
         try:
             user_info = __user__ or user or {}
             user_id = user_info.get("id", "anonymous")
+            # Isolate memory per chat session
+            chat_id = body.get("chat_id") or body.get("session_id") or ""
+            if chat_id:
+                user_id = f"{user_id}:{chat_id}"
             uv = self._parse_user_valves(user_info)
             messages = body.get("messages", [])
 

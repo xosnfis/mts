@@ -1,0 +1,22 @@
+/* GPTHub / MTS Design System — Runtime overrides (loaded before SvelteKit hydration) */
+
+:root {
+  --mts-red: #E30613;
+  --mts-red-dark: #C0050F;
+  --mts-gray-bg: #F2F3F7;
+  --mts-dark: #1D2023;
+}
+
+/* Splash screen MTS branding */
+#splash-screen {
+  background: #fff !important;
+}
+
+html.dark #splash-screen {
+  background: #1D2023 !important;
+}
+
+/* Progress bar red */
+#progress-bar {
+  background-color: var(--mts-red) !important;
+}
