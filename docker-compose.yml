@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: mws-open-webui
+    ports:
+      - "3000:8080"
+    environment:
+      # ── Core API ──────────────────────────────────────────────────────
+      - OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - OPENAI_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
+      - VERIFY_SSL=False
+
+      # ── Pipelines ─────────────────────────────────────────────────────
+      - PIPELINES_URL=http://pipelines:9099
+      - PIPELINES_API_KEY=sk-pipelines-local
+
+      # ── Default model ─────────────────────────────────────────────────
+      - DEFAULT_MODELS=llama-3.3-70b-instruct
+
+      # ── Audio / STT ───────────────────────────────────────────────────
+      - AUDIO_STT_ENGINE=openai
+      - AUDIO_STT_OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - AUDIO_STT_OPENAI_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
+      - AUDIO_STT_MODEL=whisper-turbo-local
+
+      # ── Image Generation — отключено, используется image_gen_pipeline ──
+      - IMAGE_GENERATION_ENGINE=
+
+      # ── RAG / Embeddings ──────────────────────────────────────────────
+      - RAG_EMBEDDING_ENGINE=openai
+      - RAG_OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - RAG_OPENAI_API_KEY=sk-ewgiaPC3A6pPDYHwR8siVA
+      - RAG_EMBEDDING_MODEL=bge-m3
+
+    volumes:
+      - open-webui-data:/app/backend/data
+      - ./generated_pptx:/app/backend/data/pptx
+    depends_on:
+      - pipelines
+    restart: always
+
+  pipelines:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: mws-pipelines:latest
+    container_name: mws-pipelines
+    ports:
+      - "9099:9099"
+    environment:
+      - PIPELINES_API_KEY=sk-pipelines-local
+    volumes:
+      - pipelines-data:/app/data
+      - ./generated_pptx:/app/data/pptx
+      - ./generated_files:/app/backend/data/downloads
+    restart: always
+
+volumes:
+  open-webui-data:
+  pipelines-data:
