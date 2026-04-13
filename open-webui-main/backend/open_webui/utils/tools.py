@@ -58,6 +58,9 @@ from open_webui.tools.builtin import (
     fetch_url,
     generate_image,
     edit_image,
+    create_word_document,
+    create_excel_spreadsheet,
+    create_presentation,
     execute_code,
     search_memories,
     add_memory,
@@ -483,6 +486,16 @@ def get_builtin_tools(
         and features.get('code_interpreter')
     ):
         builtin_functions.append(execute_code)
+
+    # Office exports: real .docx / .xlsx / .pptx via python-docx, openpyxl, python-pptx
+    if is_builtin_tool_enabled('office_documents'):
+        builtin_functions.extend(
+            [
+                create_word_document,
+                create_excel_spreadsheet,
+                create_presentation,
+            ]
+        )
 
     # Notes tools - search, view, create, and update user's notes (if builtin category enabled AND notes enabled globally)
     if is_builtin_tool_enabled('notes') and getattr(request.app.state.config, 'ENABLE_NOTES', False):

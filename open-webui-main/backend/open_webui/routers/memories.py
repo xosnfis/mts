@@ -6,6 +6,7 @@ from typing import Optional
 
 from open_webui.models.memories import Memories, MemoryModel
 from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
+from open_webui.retrieval.vector.main import SearchResult
 from open_webui.utils.auth import get_verified_user
 from open_webui.internal.db import get_session
 from sqlalchemy.orm import Session
@@ -134,7 +135,7 @@ async def query_memory(
 
     memories = Memories.get_memories_by_user_id(user.id)
     if not memories:
-        raise HTTPException(status_code=404, detail='No memories found for user')
+        return SearchResult(ids=[[]], documents=[[]], metadatas=[[]], distances=[[]])
 
     vector = await request.app.state.EMBEDDING_FUNCTION(form_data.content, user=user)
 
@@ -143,6 +144,9 @@ async def query_memory(
         vectors=[vector],
         limit=form_data.k,
     )
+
+    if results is None:
+        return SearchResult(ids=[[]], documents=[[]], metadatas=[[]], distances=[[]])
 
     return results
 

@@ -210,11 +210,18 @@
 			return;
 		}
 
-		const mineTypes = ['audio/webm; codecs=opus', 'audio/mp4'];
+		const mineTypes = [
+			'audio/webm; codecs=opus',
+			'audio/webm',
+			'audio/ogg; codecs=opus',
+			'audio/mp4',
+			'audio/wav'
+		];
 
-		mediaRecorder = new MediaRecorder(stream, {
-			mimeType: mineTypes.find((type) => MediaRecorder.isTypeSupported(type))
-		});
+		const supportedMime = mineTypes.find((type) => MediaRecorder.isTypeSupported(type));
+		mediaRecorder = supportedMime
+			? new MediaRecorder(stream, { mimeType: supportedMime })
+			: new MediaRecorder(stream);
 
 		mediaRecorder.onstart = () => {
 			console.log('Recording started');

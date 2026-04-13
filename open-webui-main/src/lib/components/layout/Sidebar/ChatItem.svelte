@@ -384,10 +384,10 @@
 			id="sidebar-chat-item"
 			class=" w-full flex justify-between rounded-xl px-[11px] py-[6px] {id === $chatId ||
 			confirmEdit
-				? 'bg-red-50 dark:bg-gray-900 border-l-2 border-mts-red selected'
+				? 'bg-gray-100 dark:bg-gray-900 selected'
 				: selected
-					? 'bg-red-50/60 dark:bg-gray-950 selected'
-					: 'group-hover:bg-red-50/40 dark:group-hover:bg-gray-950'}  whitespace-nowrap text-ellipsis relative {generating
+					? 'bg-gray-100 dark:bg-gray-950 selected'
+					: 'group-hover:bg-gray-100 dark:group-hover:bg-gray-950'}  whitespace-nowrap text-ellipsis relative {generating
 				? 'cursor-not-allowed'
 				: ''}"
 		>
@@ -420,10 +420,10 @@
 			id="sidebar-chat-item"
 			class=" w-full flex justify-between rounded-xl px-[11px] py-[6px] {id === $chatId ||
 			confirmEdit
-				? 'bg-red-50 dark:bg-gray-900 border-l-2 border-mts-red selected'
+				? 'bg-gray-100 dark:bg-gray-900 selected'
 				: selected
-					? 'bg-red-50/60 dark:bg-gray-950 selected'
-					: ' group-hover:bg-red-50/40 dark:group-hover:bg-gray-950'}  whitespace-nowrap text-ellipsis"
+					? 'bg-gray-100 dark:bg-gray-950 selected'
+					: ' group-hover:bg-gray-100 dark:group-hover:bg-gray-950'}  whitespace-nowrap text-ellipsis"
 			href="/c/{id}"
 			on:click={() => {
 				dispatch('select');
@@ -479,10 +479,10 @@
 		id="sidebar-chat-item-menu"
 		class="
         {id === $chatId || confirmEdit
-			? 'from-red-50 dark:from-gray-900 selected'
+			? 'from-gray-100 dark:from-gray-900 selected'
 			: selected
-				? 'from-red-50/60 dark:from-gray-950 selected'
-				: 'invisible group-hover:visible from-red-50/40 dark:from-gray-950'}
+				? 'from-gray-100 dark:from-gray-950 selected'
+				: 'invisible group-hover:visible from-gray-100 dark:from-gray-950'}
             absolute {className === 'pr-2'
 			? 'right-[8px]'
 			: 'right-1'} top-[4px] py-1 pr-0.5 mr-1.5 pl-5 bg-linear-to-l from-80%

@@ -327,17 +327,6 @@ async def chat_completed(request: Request, form_data: dict, user: Any):
     except Exception as e:
         raise Exception(f'Error: {e}')
 
-    # ── GPTHub outlet (file generation, memory summarizer) ─────────────────
-    try:
-        from open_webui.gpthub.router import _router as _gpthub_router
-        _gpthub_user_info = user.model_dump() if isinstance(user, UserModel) else {}
-        data = await _gpthub_router.process_outlet(
-            body=data,
-            user_info=_gpthub_user_info,
-        )
-    except Exception as _gpthub_exc:
-        log.warning('GPTHub outlet error (non-fatal): %s', _gpthub_exc)
-
     metadata = {
         'chat_id': data['chat_id'],
         'message_id': data['id'],

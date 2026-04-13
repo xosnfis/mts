@@ -31,3 +31,24 @@ update:
 	$(DOCKER_COMPOSE) up --build -d
 	$(DOCKER_COMPOSE) start
 
+# ── MWS GPT Edition ──────────────────────────────────────────────────────────
+mws-build:
+	$(DOCKER_COMPOSE) -f docker-compose.mws.yaml --env-file docker.env build
+
+mws-up:
+	$(DOCKER_COMPOSE) -f docker-compose.mws.yaml --env-file docker.env up -d
+
+mws-up-build:
+	$(DOCKER_COMPOSE) -f docker-compose.mws.yaml --env-file docker.env up -d --build
+
+mws-down:
+	$(DOCKER_COMPOSE) -f docker-compose.mws.yaml --env-file docker.env down
+
+mws-logs:
+	$(DOCKER_COMPOSE) -f docker-compose.mws.yaml --env-file docker.env logs -f
+
+mws-restart:
+	$(DOCKER_COMPOSE) -f docker-compose.mws.yaml --env-file docker.env restart
+
+mws-shell:
+	docker exec -it open-webui-mws bash

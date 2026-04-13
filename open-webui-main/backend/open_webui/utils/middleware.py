@@ -1585,6 +1585,157 @@ async def chat_web_search_handler(request: Request, form_data: dict, extra_param
     return form_data
 
 
+async def chat_deep_research_handler(request: Request, form_data: dict, extra_params: dict, user):
+    """
+    Deep Research handler — runs multiple web searches from different angles,
+    collects all results, and injects a rich research context into the chat.
+    The model then synthesises a comprehensive, well-structured answer.
+    """
+    event_emitter = extra_params['__event_emitter__']
+
+    await event_emitter({
+        'type': 'status',
+        'data': {
+            'action': 'web_search',
+            'description': 'Starting deep research…',
+            'done': False,
+        },
+    })
+
+    messages = form_data['messages']
+    user_message = get_last_user_message(messages)
+
+    # ── Step 1: generate multiple search angles ───────────────────────────────
+    all_queries = []
+    try:
+        res = await generate_queries(
+            request,
+            {
+                'model': form_data['model'],
+                'messages': messages,
+                'prompt': user_message,
+                'type': 'web_search',
+                'chat_id': extra_params.get('__chat_id__'),
+            },
+            user,
+        )
+        raw = res['choices'][0]['message']['content']
+        try:
+            bracket_start = raw.rfind('{')
+            bracket_end = raw.rfind('}') + 1
+            if bracket_start != -1 and bracket_end > bracket_start:
+                parsed = json.loads(raw[bracket_start:bracket_end])
+                all_queries = parsed.get('queries', [])
+        except Exception:
+            all_queries = [raw.strip()]
+    except Exception as e:
+        log.exception(e)
+
+    if not all_queries:
+        all_queries = [user_message]
+
+    # Add complementary angles for deeper coverage
+    base_topic = all_queries[0] if all_queries else user_message
+    extra_angles = [
+        f'{base_topic} overview',
+        f'{base_topic} latest developments',
+        f'{base_topic} key facts',
+    ]
+    # Merge: original queries first, then extras, deduplicated, max 6
+    seen = set()
+    merged = []
+    for q in (all_queries + extra_angles):
+        q = q.strip()
+        if q and q.lower() not in seen:
+            seen.add(q.lower())
+            merged.append(q)
+        if len(merged) >= 6:
+            break
+    all_queries = merged
+
+    await event_emitter({
+        'type': 'status',
+        'data': {
+            'action': 'web_search_queries_generated',
+            'queries': all_queries,
+            'done': False,
+        },
+    })
+
+    # ── Step 2: run all searches and collect results ──────────────────────────
+    all_files = []
+    all_urls: list[str] = []
+
+    for i, query in enumerate(all_queries):
+        await event_emitter({
+            'type': 'status',
+            'data': {
+                'action': 'web_search',
+                'description': f'Searching ({i + 1}/{len(all_queries)}): {query}',
+                'done': False,
+            },
+        })
+        try:
+            results = await process_web_search(
+                request,
+                SearchForm(queries=[query]),
+                user=user,
+            )
+            if results:
+                if results.get('collection_names'):
+                    for col_name in results['collection_names']:
+                        all_files.append({
+                            'collection_name': col_name,
+                            'name': query,
+                            'type': 'web_search',
+                            'urls': results.get('filenames', []),
+                            'queries': [query],
+                        })
+                elif results.get('docs'):
+                    all_files.append({
+                        'docs': results['docs'],
+                        'name': query,
+                        'type': 'web_search',
+                        'urls': results.get('filenames', []),
+                        'queries': [query],
+                    })
+                all_urls.extend(results.get('filenames', []))
+        except Exception as e:
+            log.warning(f'[Deep Research] Search failed for "{query}": {e}')
+
+    if all_files:
+        existing_files = form_data.get('files', [])
+        form_data['files'] = existing_files + all_files
+
+    # ── Step 3: inject a deep-research system prompt ──────────────────────────
+    research_prompt = (
+        'You are conducting deep research on the user\'s topic. '
+        'You have been provided with search results from multiple queries. '
+        'Your task:\n'
+        '1. Synthesise all retrieved information into a comprehensive, well-structured answer.\n'
+        '2. Use clear headings (##) and bullet points where appropriate.\n'
+        '3. Cite sources inline as [Source N] where N is the result number.\n'
+        '4. Highlight key findings, conflicting information, and knowledge gaps.\n'
+        '5. End with a concise summary section.\n'
+        'Be thorough, accurate, and objective.'
+    )
+    form_data['messages'] = add_or_update_system_message(
+        research_prompt, form_data['messages'], append=True
+    )
+
+    await event_emitter({
+        'type': 'status',
+        'data': {
+            'action': 'web_search',
+            'description': f'Deep research complete — searched {len(all_queries)} angles across {len(set(all_urls))} sources',
+            'urls': list(set(all_urls)),
+            'done': True,
+        },
+    })
+
+    return form_data
+
+
 def get_images_from_messages(message_list):
     images = []
 
@@ -2298,18 +2449,6 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     variables = form_data.pop('variables', None)
 
-    # ── GPTHub inlet (smart router, memory, multimodal, file gen) ──────────
-    try:
-        from open_webui.gpthub.router import _router as _gpthub_router
-        _gpthub_user_info = extra_params.get('__user__', {})
-        form_data = await _gpthub_router.process_inlet(
-            body=form_data,
-            user_info=_gpthub_user_info,
-            event_emitter=event_emitter,
-        )
-    except Exception as _gpthub_exc:
-        log.warning('GPTHub inlet error (non-fatal): %s', _gpthub_exc)
-
     # Process the form_data through the pipeline
     try:
         form_data = await process_pipeline_inlet_filter(request, form_data, user, models)
@@ -2346,14 +2485,18 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                 )
 
         if 'memory' in features and features['memory']:
-            # Skip forced memory injection when native FC is enabled - model can use memory tools
-            if metadata.get('params', {}).get('function_calling') != 'native':
-                form_data = await chat_memory_handler(request, form_data, extra_params, user)
+            # Inject retrieved memories into context. Native FC may also expose memory tools;
+            # both together match the case requirement (reliable long-term context in chat).
+            form_data = await chat_memory_handler(request, form_data, extra_params, user)
 
         if 'web_search' in features and features['web_search']:
             # Skip forced RAG web search when native FC is enabled - model can use web_search tool
             if metadata.get('params', {}).get('function_calling') != 'native':
                 form_data = await chat_web_search_handler(request, form_data, extra_params, user)
+
+        if 'deep_research' in features and features['deep_research']:
+            if metadata.get('params', {}).get('function_calling') != 'native':
+                form_data = await chat_deep_research_handler(request, form_data, extra_params, user)
 
         if 'image_generation' in features and features['image_generation']:
             # Skip forced image generation when native FC is enabled - model can use generate_image tool

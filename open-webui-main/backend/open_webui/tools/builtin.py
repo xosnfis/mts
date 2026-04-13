@@ -355,6 +355,220 @@ async def edit_image(
 
 
 # =============================================================================
+# OFFICE DOCUMENT GENERATION (.docx / .xlsx / .pptx)
+# =============================================================================
+
+_office_doc_tools = None
+
+
+def _get_office_doc_tools():
+    global _office_doc_tools
+    if _office_doc_tools is None:
+        from open_webui.tools.document_generator import Tools as OfficeDocTools
+
+        _office_doc_tools = OfficeDocTools()
+    return _office_doc_tools
+
+
+def _emit_office_file_to_chat(
+    data: dict,
+    __chat_id__,
+    __message_id__,
+) -> list:
+    """Build file list for the chat UI (type 'doc' opens full download URL in FileItem)."""
+    file_item = {
+        'type': 'doc',
+        'url': data['url'],
+        'name': data.get('filename', 'document'),
+        'size': int(data.get('size', 0)),
+        'content_type': data.get('content_type', 'application/octet-stream'),
+        'id': data.get('file_id'),
+    }
+    files_for_ui = [file_item]
+    if __chat_id__ and __message_id__:
+        db_files = Chats.add_message_files_by_id_and_message_id(
+            __chat_id__,
+            __message_id__,
+            files_for_ui,
+        )
+        if db_files is not None:
+            files_for_ui = db_files
+    return files_for_ui
+
+
+async def create_word_document(
+    title: str,
+    content: str,
+    __request__: Request = None,
+    __user__: dict = None,
+    __event_emitter__: callable = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Create a real Word (.docx) file and attach it to the chat for download.
+    Use when the user wants a Word document, report, or .docx export.
+
+    :param title: Document title (filename and main heading)
+    :param content: Body text; optional markdown-like lines: # heading, ##, ###, - bullets, 1. numbered
+    :return: JSON with status and download URL
+    """
+    if __request__ is None:
+        return json.dumps({'error': 'Request context not available'})
+
+    try:
+        tools = _get_office_doc_tools()
+        raw = await tools.create_word_document(
+            title,
+            content,
+            __user__ or {},
+            __request__,
+            __event_emitter__,
+        )
+        data = json.loads(raw)
+        if data.get('status') != 'ok':
+            return raw
+
+        files_for_ui = _emit_office_file_to_chat(data, __chat_id__, __message_id__)
+
+        if __event_emitter__ and files_for_ui:
+            await __event_emitter__(
+                {
+                    'type': 'chat:message:files',
+                    'data': {'files': files_for_ui},
+                }
+            )
+            return json.dumps(
+                {
+                    'status': 'success',
+                    'message': 'The Word file is attached in the chat for download. Briefly confirm; do not paste the full document text.',
+                    'url': data['url'],
+                    'filename': data.get('filename'),
+                },
+                ensure_ascii=False,
+            )
+
+        return raw
+    except Exception as e:
+        log.exception(f'create_word_document error: {e}')
+        return json.dumps({'error': str(e)})
+
+
+async def create_excel_spreadsheet(
+    title: str,
+    data: str,
+    __request__: Request = None,
+    __user__: dict = None,
+    __event_emitter__: callable = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Create a real Excel (.xlsx) spreadsheet and attach it to the chat for download.
+
+    :param title: Workbook title (filename and sheet name)
+    :param data: JSON array of rows, e.g. [["A","B"],["1","2"]] or CSV-like lines with | or , separators
+    :return: JSON with status and download URL
+    """
+    if __request__ is None:
+        return json.dumps({'error': 'Request context not available'})
+
+    try:
+        tools = _get_office_doc_tools()
+        raw = await tools.create_excel_spreadsheet(
+            title,
+            data,
+            __user__ or {},
+            __request__,
+            __event_emitter__,
+        )
+        parsed = json.loads(raw)
+        if parsed.get('status') != 'ok':
+            return raw
+
+        files_for_ui = _emit_office_file_to_chat(parsed, __chat_id__, __message_id__)
+
+        if __event_emitter__ and files_for_ui:
+            await __event_emitter__(
+                {
+                    'type': 'chat:message:files',
+                    'data': {'files': files_for_ui},
+                }
+            )
+            return json.dumps(
+                {
+                    'status': 'success',
+                    'message': 'The Excel file is attached in the chat for download. Briefly confirm; do not repeat the whole table.',
+                    'url': parsed['url'],
+                    'filename': parsed.get('filename'),
+                },
+                ensure_ascii=False,
+            )
+
+        return raw
+    except Exception as e:
+        log.exception(f'create_excel_spreadsheet error: {e}')
+        return json.dumps({'error': str(e)})
+
+
+async def create_presentation(
+    title: str,
+    slides: str,
+    __request__: Request = None,
+    __user__: dict = None,
+    __event_emitter__: callable = None,
+    __chat_id__: str = None,
+    __message_id__: str = None,
+) -> str:
+    """
+    Create a real PowerPoint (.pptx) file and attach it to the chat for download.
+
+    :param title: Presentation title (filename and first slide)
+    :param slides: JSON array of {"title","bullets":["..."]} or plain text blocks separated by ---
+    :return: JSON with status and download URL
+    """
+    if __request__ is None:
+        return json.dumps({'error': 'Request context not available'})
+
+    try:
+        tools = _get_office_doc_tools()
+        raw = await tools.create_presentation(
+            title,
+            slides,
+            __user__ or {},
+            __request__,
+            __event_emitter__,
+        )
+        parsed = json.loads(raw)
+        if parsed.get('status') != 'ok':
+            return raw
+
+        files_for_ui = _emit_office_file_to_chat(parsed, __chat_id__, __message_id__)
+
+        if __event_emitter__ and files_for_ui:
+            await __event_emitter__(
+                {
+                    'type': 'chat:message:files',
+                    'data': {'files': files_for_ui},
+                }
+            )
+            return json.dumps(
+                {
+                    'status': 'success',
+                    'message': 'The PowerPoint file is attached in the chat for download. Briefly confirm; do not dump all slide text.',
+                    'url': parsed['url'],
+                    'filename': parsed.get('filename'),
+                },
+                ensure_ascii=False,
+            )
+
+        return raw
+    except Exception as e:
+        log.exception(f'create_presentation error: {e}')
+        return json.dumps({'error': str(e)})
+
+
+# =============================================================================
 # CODE INTERPRETER TOOLS
 # =============================================================================
 

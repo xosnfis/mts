@@ -1,0 +1,114 @@
+# syntax=docker/dockerfile:1
+# ============================================================
+# MWS GPT Edition — slim build
+# All model calls go through https://api.gpt.mws.ru/v1
+#
+# Поддерживаемые фичи:
+#   1.  Текстовый чат (streaming, история)
+#   2.  Голосовой чат (браузерный SpeechRecognition + server STT)
+#   3.  Генерация изображений (DALL-E / Qwen-image через MWS GPT)
+#   4.  Аудиофайлы + автоматический ASR (whisper-1 через MWS GPT)
+#   5.  Изображения VLM (qwen2.5-vl-72b и др.)
+#   6.  Файлы / RAG (PDF, DOCX, TXT, CSV — bge-m3 embeddings)
+#   7.  Поиск в интернете (DuckDuckGo, auto-trigger)
+#   8.  Веб-парсинг по ссылке (auto URL detection)
+#   9.  Долгосрочная память (per-user + per-chat)
+#   10. Автовыбор модели (MWS Intelligence Filter)
+#   11. Ручной выбор модели (dropdown в UI)
+#   12. Markdown + подсветка кода (нативно)
+#   13. Deep Research (многошаговый режим с источниками)
+# ============================================================
+
+ARG BUILD_HASH=dev-build
+
+# ── Stage 1: build the SvelteKit frontend ────────────────────────────────────
+FROM --platform=$BUILDPLATFORM node:22-alpine3.20 AS frontend
+
+ARG BUILD_HASH
+WORKDIR /app
+
+RUN apk add --no-cache git
+
+COPY package.json package-lock.json ./
+RUN npm ci --force
+
+COPY . .
+ENV APP_BUILD_HASH=${BUILD_HASH}
+RUN npm run build
+
+# ── Stage 2: Python backend (slim — no local ML models) ──────────────────────
+FROM python:3.11-slim-bookworm AS app
+
+ARG BUILD_HASH
+ENV PYTHONUNBUFFERED=1 \
+    ENV=prod \
+    PORT=8080 \
+    HOST=0.0.0.0 \
+    # Tell OpenWebUI it's running in Docker
+    DOCKER=true \
+    # Disable Ollama — we use MWS GPT only
+    USE_OLLAMA_DOCKER=false \
+    USE_CUDA_DOCKER=false \
+    USE_SLIM_DOCKER=true \
+    # Disable local embedding model download (we use openai engine via MWS GPT)
+    RAG_EMBEDDING_ENGINE=openai \
+    RAG_EMBEDDING_MODEL=bge-m3 \
+    # Disable local Whisper download (we use openai STT engine via MWS GPT)
+    WHISPER_MODEL="" \
+    WHISPER_MODEL_DIR=/app/backend/data/cache/whisper/models \
+    # Фича 7-8: Web search + URL parsing enabled by default
+    ENABLE_WEB_SEARCH=true \
+    WEB_SEARCH_ENGINE=duckduckgo \
+    WEB_SEARCH_RESULT_COUNT=8 \
+    ENABLE_RAG_LOCAL_WEB_FETCH=true \
+    # Фича 9: Long-term memory enabled
+    ENABLE_MEMORIES=true \
+    # Cache dirs
+    SENTENCE_TRANSFORMERS_HOME=/app/backend/data/cache/embedding/models \
+    HF_HOME=/app/backend/data/cache/embedding/models \
+    TIKTOKEN_CACHE_DIR=/app/backend/data/cache/tiktoken \
+    # Analytics off
+    SCARF_NO_ANALYTICS=true \
+    DO_NOT_TRACK=true \
+    ANONYMIZED_TELEMETRY=false
+
+WORKDIR /app/backend
+
+# System deps — only what's needed at runtime (no build-time ML)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl jq git ffmpeg libsm6 libxext6 pandoc netcat-openbsd \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps
+COPY backend/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir uv \
+ && uv pip install --system --no-cache-dir -r requirements.txt \
+ && pip install --no-cache-dir \
+        torch torchvision torchaudio \
+        --index-url https://download.pytorch.org/whl/cpu
+
+# Chroma telemetry opt-out
+RUN mkdir -p /root/.cache/chroma \
+ && echo -n 00000000-0000-0000-0000-000000000000 \
+        > /root/.cache/chroma/telemetry_user_id
+
+# Copy built frontend
+COPY --from=frontend /app/build          /app/build
+COPY --from=frontend /app/CHANGELOG.md   /app/CHANGELOG.md
+COPY --from=frontend /app/package.json   /app/package.json
+
+# Copy backend source (includes our intelligence filter)
+COPY backend/ .
+
+# Persistent data volume mount point
+RUN mkdir -p /app/backend/data
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -sf http://localhost:${PORT}/health | jq -e '.status == true' > /dev/null || exit 1
+
+ARG BUILD_HASH
+ENV WEBUI_BUILD_VERSION=${BUILD_HASH}
+
+CMD ["bash", "start.sh"]

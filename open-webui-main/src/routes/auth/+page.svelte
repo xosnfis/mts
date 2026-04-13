@@ -411,6 +411,30 @@
 													</button>
 												</div>
 											{/if}
+
+											{#if mode === 'signin' && !($config?.onboarding ?? false)}
+												<div class="mt-3">
+													<button
+														class="w-full rounded-full font-medium text-sm py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+														type="button"
+														on:click={() => { mode = 'signup'; }}
+													>
+														{$i18n.t('Sign up')}
+													</button>
+												</div>
+											{/if}
+
+											{#if mode === 'signup' && !($config?.onboarding ?? false)}
+												<div class="mt-3">
+													<button
+														class="w-full rounded-full font-medium text-sm py-2.5 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition"
+														type="button"
+														on:click={() => { mode = 'signin'; }}
+													>
+														{$i18n.t('Sign in')}
+													</button>
+												</div>
+											{/if}
 										{/if}
 									{/if}
 								</div>

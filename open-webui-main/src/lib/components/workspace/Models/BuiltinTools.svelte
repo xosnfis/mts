@@ -42,6 +42,10 @@
 		code_interpreter: {
 			label: $i18n.t('Code Interpreter'),
 			description: $i18n.t('Execute code')
+		},
+		office_documents: {
+			label: $i18n.t('Office Documents'),
+			description: $i18n.t('Create Word, Excel, and PowerPoint files for download')
 		}
 	};
 

@@ -1,0 +1,88 @@
+services:
+  open-webui-mws:
+    build:
+      context: .
+      dockerfile: Dockerfile.mws
+      args:
+        BUILD_HASH: mws-gpt-edition
+    image: open-webui-mws:latest
+    container_name: open-webui-mws
+    restart: unless-stopped
+    ports:
+      - "${OPEN_WEBUI_PORT:-3000}:8080"
+    volumes:
+      # Persistent data: DB, uploaded files, cache
+      - open-webui-mws-data:/app/backend/data
+    environment:
+      # ── MWS GPT primary backend ──────────────────────────────────────────
+      - OPENAI_API_BASE_URLS=https://api.gpt.mws.ru/v1
+      - OPENAI_API_KEYS=${MWS_GPT_API_KEY}
+      - DEFAULT_MODELS=mws-gpt-alpha
+      - ENABLE_OLLAMA_API=false
+
+      # ── Auth ─────────────────────────────────────────────────────────────
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY:-}
+      - WEBUI_AUTH=${WEBUI_AUTH:-true}
+
+      # ── STT — MWS GPT /audio/transcriptions ──────────────────────────────
+      - AUDIO_STT_ENGINE=openai
+      - AUDIO_STT_OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - AUDIO_STT_OPENAI_API_KEY=${MWS_GPT_API_KEY}
+      - AUDIO_STT_MODEL=whisper-medium
+
+      # ── TTS — MWS GPT /audio/speech ──────────────────────────────────────
+      - AUDIO_TTS_ENGINE=openai
+      - AUDIO_TTS_OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - AUDIO_TTS_OPENAI_API_KEY=${MWS_GPT_API_KEY}
+      - AUDIO_TTS_MODEL=tts-1
+      - AUDIO_TTS_VOICE=alloy
+
+      # ── Image generation — MWS GPT /images/generations ───────────────────
+      # qwen-image-lightning и qwen-image работают ТОЛЬКО через /images/generations,
+      # НЕ через /chat/completions. Фильтр включает feature image_generation,
+      # Open WebUI вызывает /images/generations с IMAGE_GENERATION_MODEL.
+      - ENABLE_IMAGE_GENERATION=true
+      - IMAGE_GENERATION_ENGINE=openai
+      - IMAGES_OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - IMAGES_OPENAI_API_KEY=${MWS_GPT_API_KEY}
+      - IMAGE_GENERATION_MODEL=qwen-image-lightning
+      - IMAGE_SIZE=1024x1024
+      - ENABLE_IMAGE_PROMPT_GENERATION=false
+
+      # ── Embeddings — bge-m3 via MWS GPT ──────────────────────────────────
+      - RAG_EMBEDDING_ENGINE=openai
+      - RAG_EMBEDDING_MODEL=bge-m3
+      - RAG_OPENAI_API_BASE_URL=https://api.gpt.mws.ru/v1
+      - RAG_OPENAI_API_KEY=${MWS_GPT_API_KEY}
+
+      # ── Memory ───────────────────────────────────────────────────────────
+      - ENABLE_MEMORIES=true
+
+      # ── Web search — DuckDuckGo (no API key needed) ───────────────────────
+      - ENABLE_WEB_SEARCH=true
+      - WEB_SEARCH_ENGINE=duckduckgo
+      - WEB_SEARCH_RESULT_COUNT=5
+      - BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL=false
+
+      # ── File analysis ─────────────────────────────────────────────────────
+      - CONTENT_EXTRACTION_ENGINE=
+      # Лимит файла 50 MB, до 20 файлов за раз
+      - RAG_FILE_MAX_SIZE=50
+      - RAG_FILE_MAX_COUNT=20
+      # Полный контекст документа без разбивки на чанки (лучше для больших PDF)
+      - RAG_FULL_CONTEXT=true
+
+      # ── General ──────────────────────────────────────────────────────────
+      - CORS_ALLOW_ORIGIN=*
+      - FORWARDED_ALLOW_IPS=*
+      - SCARF_NO_ANALYTICS=true
+      - DO_NOT_TRACK=true
+      - ANONYMIZED_TELEMETRY=false
+      # Все модели видны всем пользователям без явного назначения прав
+      - BYPASS_MODEL_ACCESS_CONTROL=true
+    extra_hosts:
+      - host.docker.internal:host-gateway
+
+volumes:
+  open-webui-mws-data:
+    driver: local

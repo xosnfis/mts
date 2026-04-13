@@ -669,7 +669,7 @@
 							<StatusHistory statusHistory={message?.statusHistory} />
 						{/if}
 
-						{#if message?.files && message.files?.filter((f) => f.type === 'image').length > 0}
+						{#if message?.files && message.files.length > 0}
 							<div
 								class="my-1 w-full flex overflow-x-auto gap-2 flex-wrap"
 								dir={$settings?.chatDirection ?? 'auto'}
@@ -682,9 +682,9 @@
 											<FileItem
 												item={file}
 												url={file.url}
-												name={file.name}
+												name={file.name ?? file.filename}
 												type={file.type}
-												size={file?.size}
+												size={file?.size ?? 0}
 												small={true}
 											/>
 										{/if}

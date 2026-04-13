@@ -605,6 +605,78 @@ https://github.com/open-webui/open-webui
 """)
 
 
+def _seed_mws_intelligence_filter():
+    """
+    Insert the MWS Intelligence Filter into the DB on first run (idempotent).
+    The filter is a global inlet filter that auto-selects models and tools.
+    """
+    import os as _os
+    from pathlib import Path as _Path
+
+    FILTER_ID = 'mws_intelligence_filter'
+
+    try:
+        existing = Functions.get_function_by_id(FILTER_ID)
+        if existing:
+            # Already seeded — update content in case the file changed
+            filter_path = _Path(__file__).parent / 'functions' / 'mws_intelligence_filter.py'
+            if filter_path.exists():
+                new_content = filter_path.read_text(encoding='utf-8')
+                if existing.content != new_content:
+                    from open_webui.internal.db import get_db
+                    from open_webui.models.functions import Function
+                    import time as _time
+                    with get_db() as db:
+                        db.query(Function).filter_by(id=FILTER_ID).update({
+                            'content': new_content,
+                            'updated_at': int(_time.time()),
+                        })
+                        db.commit()
+                    # Invalidate the in-memory function module cache so the new
+                    # filter code is picked up immediately without a restart.
+                    try:
+                        if hasattr(app.state, 'FUNCTIONS') and FILTER_ID in app.state.FUNCTIONS:
+                            del app.state.FUNCTIONS[FILTER_ID]
+                            log.info('[MWS Intelligence] Function module cache cleared.')
+                    except Exception:
+                        pass
+                    log.info('[MWS Intelligence] Filter content updated.')
+            return
+
+        filter_path = _Path(__file__).parent / 'functions' / 'mws_intelligence_filter.py'
+        if not filter_path.exists():
+            log.warning(f'[MWS Intelligence] Filter file not found: {filter_path}')
+            return
+
+        content = filter_path.read_text(encoding='utf-8')
+
+        from open_webui.models.functions import FunctionForm, FunctionMeta
+        import time as _time
+        from open_webui.internal.db import get_db
+        from open_webui.models.functions import Function
+
+        now = int(_time.time())
+        func = Function(
+            id=FILTER_ID,
+            user_id='system',
+            name='MWS Intelligence Filter',
+            type='filter',
+            content=content,
+            meta={'description': 'Auto model/tool selection and memory injection for MWS GPT'},
+            valves=None,
+            is_active=True,
+            is_global=True,
+            updated_at=now,
+            created_at=now,
+        )
+        with get_db() as db:
+            db.add(func)
+            db.commit()
+        log.info('[MWS Intelligence] Filter seeded successfully.')
+    except Exception as e:
+        log.warning(f'[MWS Intelligence] Could not seed filter: {e}')
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Store reference to main event loop for sync->async calls (e.g., embedding generation)
@@ -698,6 +770,9 @@ async def lifespan(app: FastAPI):
             log.info(f'Initialized {len(app.state.TERMINAL_SERVERS)} terminal server(s)')
         except Exception as e:
             log.warning(f'Failed to initialize tool/terminal servers at startup: {e}')
+
+    # Seed the MWS Intelligence Filter (global inlet filter for auto model/tool selection)
+    _seed_mws_intelligence_filter()
 
     # Mark application as ready to accept traffic from a startup perspective.
     app.state.startup_complete = True

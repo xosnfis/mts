@@ -278,14 +278,20 @@ export const updateFileDataContentById = async (token: string, id: string, conte
 	return res;
 };
 
-export const getFileContentById = async (id: string) => {
+export const getFileContentById = async (id: string, token?: string | null) => {
 	let error = null;
+
+	const headers: Record<string, string> = {
+		Accept: '*/*'
+	};
+	const auth = token ?? (typeof localStorage !== 'undefined' ? localStorage.token : null);
+	if (auth) {
+		headers['Authorization'] = `Bearer ${auth}`;
+	}
 
 	const res = await fetch(`${WEBUI_API_BASE_URL}/files/${id}/content`, {
 		method: 'GET',
-		headers: {
-			Accept: 'application/json'
-		},
+		headers,
 		credentials: 'include'
 	})
 		.then(async (res) => {
